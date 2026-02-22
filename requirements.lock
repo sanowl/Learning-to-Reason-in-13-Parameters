@@ -1,0 +1,9 @@
+# Locked runtime dependencies for reproducible runs.
+# Update intentionally and keep in sync with pyproject.toml.
+accelerate==1.9.0
+datasets==4.0.0
+numpy==2.2.6
+PyYAML==6.0.2
+torch==2.8.0
+transformers==4.54.1
+trl==0.16.0

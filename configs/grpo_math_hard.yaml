@@ -1,0 +1,39 @@
+mode: grpo
+seed: 42
+model_name: Qwen/Qwen2.5-7B-Instruct
+model_dtype: bfloat16
+output_dir: outputs/grpo_math_hard
+
+train_dataset:
+  source: hf
+  path: SimpleRL-Zoo/math-hard
+  name: default
+  split: train
+  prompt_field: problem
+  answer_field: solution
+  prompt_template: "{question}\n\nPlease reason carefully and put the final answer in \\boxed{} format."
+
+tinylora:
+  rank: 2
+  proj_dim: 196
+  tie_mode: structured
+  tie_factor: 64
+  seed: 42
+  vector_dtype: float32
+  compute_dtype: float32
+  target_modules: [q_proj, k_proj, v_proj, o_proj, up_proj, down_proj, gate_proj]
+
+training:
+  num_train_epochs: 3
+  learning_rate: 1.0e-6
+  per_device_train_batch_size: 2
+  gradient_accumulation_steps: 128
+  num_generations: 8
+  max_prompt_length: 1024
+  max_completion_length: 3072
+  beta: 0.001
+  bf16: true
+  fp16: false
+  logging_steps: 10
+  save_steps: 200
+  report_to: []

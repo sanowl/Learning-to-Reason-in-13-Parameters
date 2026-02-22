@@ -1,0 +1,11 @@
+base_config: configs/sft_gsm8k.yaml
+output_root: outputs/sweeps/sft_capacity
+
+grid:
+  training.learning_rate: [1.0e-6, 5.0e-6, 1.0e-5, 5.0e-5]
+  tinylora.rank: [1, 2]
+  tinylora.proj_dim: [1, 13, 49, 196, 392, 6272]
+  tinylora.tie_mode: [full, structured]
+  tinylora.tie_factor: [1, 8, 64, 256]
+
+max_runs: null

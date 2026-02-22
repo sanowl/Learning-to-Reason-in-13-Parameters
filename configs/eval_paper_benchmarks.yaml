@@ -1,0 +1,103 @@
+mode: eval
+seed: 42
+deterministic: false
+deterministic_warn_only: true
+model_name: Qwen/Qwen2.5-7B-Instruct
+model_dtype: bfloat16
+
+# Provide this when evaluating a TinyLoRA checkpoint.
+# trainable_state_path: outputs/grpo_gsm8k/trainable_state.pt
+# tinylora:
+#   rank: 2
+#   proj_dim: 13
+#   tie_mode: full
+#   tie_factor: 1
+#   seed: 42
+#   vector_dtype: float32
+#   compute_dtype: float32
+#   target_modules: [q_proj, k_proj, v_proj, o_proj, up_proj, down_proj, gate_proj]
+
+generation:
+  batch_size: 4
+  max_prompt_length: 1024
+  max_new_tokens: 1024
+  temperature: 0.0
+  top_p: 1.0
+
+datasets:
+  - alias: GSM8K
+    source: hf
+    path: gsm8k
+    name: main
+    split: test
+    prompt_field: question
+    answer_field: answer
+    prompt_template: "{question}\n\nReason step by step and end with the final answer."
+
+  # The paper uses Qwen-Math canonical benchmark suites; IDs can differ by mirror.
+  - alias: MATH500
+    source: hf
+    path: Qwen/Qwen-Math-Eval
+    name: math500
+    split: test
+    prompt_field: problem
+    answer_field: answer
+    prompt_template: "{question}\n\nReason step by step and put the final answer in \\boxed{} format."
+
+  - alias: Minerva
+    source: hf
+    path: Qwen/Qwen-Math-Eval
+    name: minerva_math
+    split: test
+    prompt_field: problem
+    answer_field: answer
+    prompt_template: "{question}\n\nReason step by step and put the final answer in \\boxed{} format."
+
+  - alias: GAOKAO
+    source: hf
+    path: Qwen/Qwen-Math-Eval
+    name: gaokao
+    split: test
+    prompt_field: problem
+    answer_field: answer
+    prompt_template: "{question}\n\nReason step by step and put the final answer in \\boxed{} format."
+
+  - alias: OlympiadBench
+    source: hf
+    path: Qwen/Qwen-Math-Eval
+    name: olympiad_bench
+    split: test
+    prompt_field: problem
+    answer_field: answer
+    prompt_template: "{question}\n\nReason step by step and put the final answer in \\boxed{} format."
+
+  - alias: CollegeMath
+    source: hf
+    path: Qwen/Qwen-Math-Eval
+    name: college_math
+    split: test
+    prompt_field: problem
+    answer_field: answer
+    prompt_template: "{question}\n\nReason step by step and put the final answer in \\boxed{} format."
+
+  - alias: AIME24
+    source: hf
+    path: Qwen/Qwen-Math-Eval
+    name: aime24
+    split: test
+    prompt_field: problem
+    answer_field: answer
+    prompt_template: "{question}\n\nReason step by step and put the final answer in \\boxed{} format."
+
+  - alias: AMC23
+    source: hf
+    path: Qwen/Qwen-Math-Eval
+    name: amc23
+    split: test
+    prompt_field: problem
+    answer_field: answer
+    prompt_template: "{question}\n\nReason step by step and put the final answer in \\boxed{} format."
+
+output_path: outputs/eval/paper_benchmarks.json
+# output_jsonl_path: outputs/eval/paper_benchmarks.jsonl
+# output_csv_path: outputs/eval/paper_benchmarks.csv

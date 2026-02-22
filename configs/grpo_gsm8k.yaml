@@ -1,0 +1,47 @@
+mode: grpo
+seed: 42
+deterministic: false
+deterministic_warn_only: true
+model_name: Qwen/Qwen2.5-7B-Instruct
+model_dtype: bfloat16
+output_dir: outputs/grpo_gsm8k
+
+train_dataset:
+  source: hf
+  path: gsm8k
+  name: main
+  split: train
+  prompt_field: question
+  answer_field: answer
+  prompt_template: "{question}\n\nReason step by step. End with only the final answer."
+
+tinylora:
+  rank: 2
+  proj_dim: 13
+  tie_mode: full
+  tie_factor: 1
+  seed: 42
+  vector_dtype: float32
+  compute_dtype: float32
+  target_modules: [q_proj, k_proj, v_proj, o_proj, up_proj, down_proj, gate_proj]
+
+guardrails:
+  expected_trainable_params: 13
+  expected_trainable_bytes: 52
+  tolerance: 0
+  require_trainable_params: true
+
+training:
+  num_train_epochs: 3
+  learning_rate: 1.0e-6
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 64
+  num_generations: 4
+  max_prompt_length: 1024
+  max_completion_length: 4096
+  beta: 0.0
+  bf16: true
+  fp16: false
+  logging_steps: 10
+  save_steps: 200
+  report_to: []

@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ltr13"
+version = "0.1.0"
+description = "Reproduction starter for 'Learning to Reason in 13 Parameters'"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "LTR13 Contributors" }]
+dependencies = [
+  "torch>=2.2",
+  "transformers>=4.48",
+  "datasets>=3.0",
+  "trl>=0.16",
+  "accelerate>=1.3",
+  "pyyaml>=6.0",
+  "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "ruff>=0.8",
+  "pre-commit>=4.2",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

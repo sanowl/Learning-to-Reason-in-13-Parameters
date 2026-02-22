@@ -1,0 +1,5 @@
+# Locked development dependencies.
+-r requirements.lock
+pre-commit==4.2.0
+pytest==8.4.1
+ruff==0.12.8
