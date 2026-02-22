@@ -1,0 +1,25 @@
+mode: eval
+seed: 42
+deterministic: false
+deterministic_warn_only: true
+model_name: Qwen/Qwen2.5-7B-Instruct
+model_dtype: bfloat16
+
+generation:
+  batch_size: 4
+  max_prompt_length: 1024
+  max_new_tokens: 1024
+  temperature: 0.0
+  top_p: 1.0
+
+datasets:
+  - alias: GSM8K
+    source: hf
+    path: gsm8k
+    name: main
+    split: test
+    prompt_field: question
+    answer_field: answer
+    prompt_template: "{question}\n\nReason step by step and end with the final answer."
+
+output_path: outputs/eval/gsm8k_select.json

@@ -1,0 +1,40 @@
+mode: eval
+seed: 42
+deterministic: false
+deterministic_warn_only: true
+model_name: Qwen/Qwen2.5-7B-Instruct
+model_dtype: bfloat16
+
+generation:
+  batch_size: 4
+  max_prompt_length: 512
+  max_new_tokens: 64
+  temperature: 0.0
+  top_p: 1.0
+
+datasets:
+  - alias: BoolQ
+    source: hf
+    path: google/boolq
+    split: validation
+    prompt_field: question
+    answer_field: answer
+    prompt_template: "Question: {question}\nAnswer with only True or False."
+
+  - alias: PIQA
+    source: hf
+    path: piqa
+    split: validation
+    prompt_field: goal
+    answer_field: label
+    prompt_template: "Task: {question}\nAnswer with only 0 or 1."
+
+  - alias: CommonsenseQA
+    source: hf
+    path: tau/commonsense_qa
+    split: validation
+    prompt_field: question
+    answer_field: answerKey
+    prompt_template: "Question: {question}\nAnswer with only A, B, C, D, or E."
+
+output_path: outputs/eval/beyond_math.json

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .config import parse_tinylora_config
+from .config import parse_adapter_config
 from .data import parse_dataset_config
 
 _VALID_MODES = {"grpo", "sft", "eval"}
@@ -29,12 +29,23 @@ def validate_config(config: dict[str, Any]) -> None:
     deterministic_warn_only = config.get("deterministic_warn_only", True)
     if not isinstance(deterministic_warn_only, bool):
         errors.append("deterministic_warn_only must be a boolean")
+    init_state_path = config.get("init_trainable_state_path")
+    if init_state_path is not None and not isinstance(init_state_path, str):
+        errors.append("init_trainable_state_path must be a string when provided")
+    strict_init = config.get("strict_init_trainable_state", True)
+    if not isinstance(strict_init, bool):
+        errors.append("strict_init_trainable_state must be a boolean")
 
-    if config.get("tinylora") is not None:
-        try:
-            parse_tinylora_config(config.get("tinylora"))
-        except Exception as error:  # noqa: BLE001
-            errors.append(f"tinylora config invalid: {error}")
+    budget_cfg = config.get("budget_allocation")
+    if budget_cfg is not None and not isinstance(budget_cfg, dict):
+        errors.append("budget_allocation must be a mapping when provided")
+    elif isinstance(budget_cfg, dict):
+        _validate_budget_block(budget_cfg, errors)
+
+    try:
+        parse_adapter_config(config)
+    except Exception as error:  # noqa: BLE001
+        errors.append(f"adapter config invalid: {error}")
 
     if mode in {"grpo", "sft"}:
         if not isinstance(config.get("train_dataset"), dict):
@@ -60,6 +71,12 @@ def validate_config(config: dict[str, Any]) -> None:
         training = {}
 
     _validate_training_block(mode=mode, training=training, errors=errors)
+
+    truncated_is = config.get("truncated_importance_sampling", {})
+    if truncated_is is not None and not isinstance(truncated_is, dict):
+        errors.append("truncated_importance_sampling must be a mapping when provided")
+    elif isinstance(truncated_is, dict):
+        _validate_truncated_is_block(truncated_is, errors)
 
     if mode == "eval":
         datasets = config.get("datasets")
@@ -134,6 +151,36 @@ def _validate_guardrails_block(guardrails: dict[str, Any], errors: list[str]) ->
         guardrails["require_trainable_params"], bool
     ):
         errors.append("guardrails.require_trainable_params must be boolean")
+
+
+def _validate_truncated_is_block(config: dict[str, Any], errors: list[str]) -> None:
+    if "enabled" in config and not isinstance(config["enabled"], bool):
+        errors.append("truncated_importance_sampling.enabled must be boolean")
+    if "clip_max" in config:
+        value = config["clip_max"]
+        if not isinstance(value, (int, float)) or float(value) <= 0:
+            errors.append("truncated_importance_sampling.clip_max must be a positive number")
+
+
+def _validate_budget_block(config: dict[str, Any], errors: list[str]) -> None:
+    if "enabled" in config and not isinstance(config["enabled"], bool):
+        errors.append("budget_allocation.enabled must be boolean")
+    if "total_proj_dim_budget" in config:
+        value = config["total_proj_dim_budget"]
+        if not isinstance(value, int) or value <= 0:
+            errors.append("budget_allocation.total_proj_dim_budget must be a positive integer")
+    if "min_proj_dim_per_group" in config:
+        value = config["min_proj_dim_per_group"]
+        if not isinstance(value, int) or value <= 0:
+            errors.append("budget_allocation.min_proj_dim_per_group must be a positive integer")
+    if "max_proj_dim_per_group" in config:
+        value = config["max_proj_dim_per_group"]
+        if not isinstance(value, int) or value <= 0:
+            errors.append("budget_allocation.max_proj_dim_per_group must be a positive integer")
+    if "strategy" in config and str(config["strategy"]) not in {"uniform", "gradient"}:
+        errors.append("budget_allocation.strategy must be one of {uniform, gradient}")
+    if "group_scores_path" in config and not isinstance(config["group_scores_path"], str):
+        errors.append("budget_allocation.group_scores_path must be a string")
 
 
 def _require_positive_int(

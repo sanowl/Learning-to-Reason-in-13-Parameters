@@ -9,9 +9,9 @@ import torch
 from tqdm.auto import tqdm
 
 from .checkpointing import load_trainable_state
-from .config import load_yaml_config, parse_tinylora_config
+from .config import load_yaml_config, parse_adapter_config
 from .data import load_reasoning_dataset, parse_dataset_config
-from .inject import apply_tinylora
+from .inject import apply_adapter
 from .metadata import build_run_metadata, write_run_metadata
 from .modeling import load_model_and_tokenizer
 from .reward import exact_match_reward
@@ -129,9 +129,9 @@ def main() -> None:
         model_kwargs=config.get("model_kwargs"),
     )
 
-    tinylora_cfg = parse_tinylora_config(config.get("tinylora"))
-    if tinylora_cfg is not None:
-        apply_tinylora(model, tinylora_cfg)
+    adapter_cfg = parse_adapter_config(config)
+    if adapter_cfg is not None:
+        apply_adapter(model, adapter_cfg)
 
     checkpoint_path = config.get("trainable_state_path")
     if checkpoint_path:

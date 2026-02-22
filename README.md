@@ -1,23 +1,21 @@
 # Learning to Reason in 13 Parameters
 
-Implementation-focused reproduction starter for:
+A compact framework for tiny-adapter reasoning experiments.
 
-**Learning to Reason in 13 Parameters**
-John X. Morris, Niloofar Mireshghallah, Mark Ibrahim, Saeed Mahloujifar (2026)
-`arXiv:2602.04118`
-
-This repository implements the paper's TinyLoRA method and provides runnable scaffolding for:
+This repository provides runnable scaffolding for:
 - RL (GRPO) and SFT training
+- Baseline adapters in the same pipeline (`lora`, `lora_xs`, `tinylora`)
 - Tiny update-size sweeps
 - Multi-benchmark evaluation
 - Merged checkpoint export for inference
 
 ## Scope and goals
 
-This repo is built to match the paper's algorithmic ideas and experiment structure, while remaining easy to modify.
+This repo is built for practical adapter research while remaining easy to modify.
 
 What is included:
-- Paper-faithful TinyLoRA module and update equation
+- TinyLoRA module and update equation
+- LoRA and LoRA-XS baselines with shared injection/training pipeline
 - Weight tying modes for extreme parameter compression
 - GRPO and SFT training entrypoints with YAML configs
 - Reward and answer extraction utilities (math-style EM)
@@ -31,7 +29,7 @@ What is included:
 - Unit tests for correctness and parameter accounting
 
 What is not guaranteed out of the box:
-- Exact leaderboard numbers from the paper without equivalent compute, model versions, and dataset mirrors
+- Exact leaderboard parity without matching compute, model versions, and dataset mirrors
 
 ## TinyLoRA method
 
@@ -61,7 +59,7 @@ The implementation is in `src/ltr13/tinylora.py`.
 - `scripts/export_merged.py`: convenience wrapper for merged export
 - `configs/`: example configs for training, evaluation, and sweeps
 - `tests/`: unit tests
-- `PAPER_IMPLEMENTATION.md`: section-by-section paper mapping
+- `PAPER_IMPLEMENTATION.md`: design and experiment mapping notes
 
 ## Installation
 
@@ -91,6 +89,13 @@ pytest -q
 python scripts/run_experiment.py --config configs/grpo_gsm8k.yaml
 ```
 
+LoRA and LoRA-XS baselines:
+
+```bash
+python scripts/run_experiment.py --config configs/grpo_gsm8k_lora.yaml
+python scripts/run_experiment.py --config configs/grpo_gsm8k_lora_xs.yaml
+```
+
 ### 2. SFT baseline
 
 ```bash
@@ -100,7 +105,7 @@ python scripts/run_experiment.py --config configs/sft_gsm8k.yaml
 ### 3. Multi-benchmark evaluation
 
 ```bash
-python scripts/run_experiment.py --config configs/eval_paper_benchmarks.yaml
+python scripts/run_experiment.py --config configs/eval_beyond_math.yaml
 ```
 
 ### 4. Export merged model for inference
@@ -111,16 +116,22 @@ python scripts/export_merged.py \
   --output-dir outputs/merged_model
 ```
 
-### 5. Run sweep (paper-style ablation scaffold)
+### 5. Run sweep (ablation scaffold)
 
 ```bash
-python scripts/run_sweep.py --config configs/sweeps/paper_repro.yaml
+python scripts/run_sweep.py --config configs/sweeps/adapter_ablation.yaml
 ```
 
 Dry run sweeps without executing:
 
 ```bash
-python scripts/run_sweep.py --config configs/sweeps/paper_repro.yaml --dry-run
+python scripts/run_sweep.py --config configs/sweeps/adapter_ablation.yaml --dry-run
+```
+
+Full sweep automation (LR grid + 3 seeds + best-LR per point):
+
+```bash
+python scripts/run_full_sweep.py --config configs/sweeps/full_repro.yaml
 ```
 
 ## Config system
@@ -129,7 +140,7 @@ Experiments are YAML-driven. Main sections:
 - `mode`: `grpo`, `sft`, or `eval`
 - `model_name`, `model_dtype`
 - `train_dataset` / `eval_dataset` / `datasets`
-- `tinylora`
+- `adapter` (or legacy `tinylora`)
 - `training`
 - `generation` (for eval)
 - `guardrails`
@@ -137,13 +148,20 @@ Experiments are YAML-driven. Main sections:
 
 ### TinyLoRA config fields
 
-- `rank`: frozen SVD rank `r` (paper ablations include `r=1` and `r=2`)
+- `rank`: frozen SVD rank `r` (common settings include `r=1` and `r=2`)
 - `proj_dim`: trainable vector size `u`
 - `tie_mode`: `none`, `structured`, `tiled`, `full`
 - `tie_factor`: number of modules sharing one vector (for `structured`/`tiled`)
 - `target_modules`: module suffixes to adapt
 - `vector_dtype`: storage dtype for trainable `v`
 - `compute_dtype`: dtype for adapter math (`U, Σ, V, P` paths)
+
+### Adapter baseline fields
+
+- `adapter.adapter_type`: `tinylora`, `lora`, `lora_xs`
+- `adapter.rank`: shared rank hyperparameter
+- `adapter.lora_alpha`, `adapter.lora_dropout`: LoRA-only controls
+- `adapter.svd_method`, `adapter.svd_niter`: TinyLoRA/LoRA-XS SVD controls
 
 ### Guardrails and reproducibility fields
 
@@ -167,15 +185,32 @@ Implemented in `src/ltr13/inject.py`:
 - GRPO reward uses exact match from generated answer vs reference answer.
 - Math-style answer extraction supports `####`, `\\boxed{}`, integers, decimals, and simple fractions.
 - Evaluation uses generation + exact match scoring for each configured dataset.
+- Optional truncated-IS reweighting can be enabled in GRPO configs via `truncated_importance_sampling`.
 - `run_metadata.json` is written to output directories for `grpo`, `sft`, and `eval`.
 - Eval writes schema-stable rows for machine comparison:
   - `output_path` (JSON summary)
   - `output_jsonl_path` (one row per dataset)
   - `output_csv_path` (tabular)
 
+### Aggregation and plotting
+
+```bash
+python scripts/aggregate_results.py \
+  --inputs "outputs/**/results.json" \
+  --output-json outputs/analysis/all_results.json \
+  --output-csv outputs/analysis/all_results.csv
+
+python scripts/plot_results.py \
+  --csv outputs/analysis/all_results.csv \
+  --x num_examples \
+  --y exact_match \
+  --hue dataset \
+  --output outputs/analysis/example_plot.png
+```
+
 ## Reproducibility checklist
 
-For closer paper parity, keep these aligned with the paper:
+For stronger run-to-run comparability, keep these aligned:
 - Model family/checkpoint version
 - Dataset version/splits and prompt templates
 - RL hyperparameters (num generations, length caps, KL beta, batch schedule)
@@ -184,8 +219,8 @@ For closer paper parity, keep these aligned with the paper:
 
 ## Known practical constraints
 
-- Some benchmark dataset IDs in `configs/eval_paper_benchmarks.yaml` may differ by Hugging Face mirror; adjust `path`/`name` as needed.
-- Full-scale paper runs require substantial multi-GPU compute.
+- Some benchmark dataset IDs may differ by Hugging Face mirror; adjust dataset `path`/`name` as needed.
+- Large-scale runs require substantial multi-GPU compute.
 - Results can shift significantly with tokenizer/model revisions.
 
 ## Development
@@ -209,9 +244,15 @@ pre-commit install
 pre-commit run --all-files
 ```
 
+Optional distributed smoke test (1-step SFT-like + RL-like DDP step):
+
+```bash
+LTR13_RUN_DISTRIBUTED_SMOKE=1 pytest -q tests/test_distributed_smoke.py
+```
+
 ## Additional docs
 
-- Paper implementation map: `PAPER_IMPLEMENTATION.md`
+- Design and experiment notes: `PAPER_IMPLEMENTATION.md`
 
 ## Citation
 

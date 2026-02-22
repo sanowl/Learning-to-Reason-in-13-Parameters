@@ -37,3 +37,7 @@ training:
   logging_steps: 10
   save_steps: 200
   report_to: []
+
+truncated_importance_sampling:
+  enabled: false
+  clip_max: 2.0

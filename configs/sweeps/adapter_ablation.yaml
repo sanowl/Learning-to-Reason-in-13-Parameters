@@ -1,0 +1,13 @@
+base_config: configs/grpo_gsm8k.yaml
+output_root: outputs/sweeps/paper_repro
+
+# Mirror of the paper's low-parameter sweeps (can be very large; use max_runs to cap).
+grid:
+  training.learning_rate: [1.0e-7, 5.0e-7, 1.0e-6, 5.0e-6, 1.0e-5, 1.0e-4, 2.0e-4]
+  tinylora.rank: [1, 2]
+  tinylora.proj_dim: [1, 13, 49, 196, 392]
+  tinylora.tie_mode: [full, structured, tiled]
+  tinylora.tie_factor: [1, 8, 64, 256]
+
+# Set to an integer for quick smoke sweeps.
+max_runs: null

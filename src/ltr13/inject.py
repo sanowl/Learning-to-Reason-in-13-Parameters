@@ -4,12 +4,14 @@ import hashlib
 import re
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Any, Iterable
 
 import torch
 from torch import nn
 
+from .budget import resolve_group_proj_dims
 from .config import TinyLoRAConfig
+from .lora import LoRALinear, LoRAXSLinear
 from .tinylora import TinyLoRALinear
 from .utils import count_unique_trainable_parameters
 
@@ -22,61 +24,196 @@ class InjectionReport:
     shared_vectors: int
     trainable_parameters: int
     module_to_group: dict[str, str]
+    parameter_to_group: dict[str, str]
 
 
-def apply_tinylora(model: nn.Module, config: TinyLoRAConfig) -> InjectionReport:
+def apply_adapter(
+    model: nn.Module,
+    config: TinyLoRAConfig,
+    *,
+    budget_cfg: dict[str, Any] | None = None,
+) -> InjectionReport:
     targets = collect_target_linears(model, config.target_modules)
     if not targets:
-        raise ValueError("No target modules matched TinyLoRA target_modules")
+        raise ValueError("No target modules matched adapter target_modules")
 
     for parameter in model.parameters():
         parameter.requires_grad = False
 
     module_names = [name for name, _ in targets]
     module_to_group = assign_tie_groups(module_names, mode=config.tie_mode, tie_factor=config.tie_factor)
+    group_names = sorted(set(module_to_group.values()))
+    group_proj_dims = resolve_group_proj_dims(
+        groups=group_names,
+        default_proj_dim=config.proj_dim,
+        budget_cfg=budget_cfg if config.adapter_type == "tinylora" else None,
+    )
 
-    shared_vectors: dict[str, nn.Parameter] = {}
+    shared_payloads: dict[str, object] = {}
     shared_devices: dict[str, torch.device] = {}
+    shared_shapes: dict[str, tuple[int, int]] = {}
+
     for name, module in targets:
         group = module_to_group[name]
-        shared = shared_vectors.get(group)
-        if shared is None:
-            device = module.weight.device
-            shared = nn.Parameter(
-                torch.zeros(config.proj_dim, dtype=config.vector_torch_dtype, device=device),
-                requires_grad=True,
-            )
-            shared_vectors[group] = shared
+        group_seed = _stable_seed(config.seed, group)
+        module_seed = _stable_seed(config.seed, name)
+
+        payload = shared_payloads.get(group)
+        device = module.weight.device
+        if payload is None:
             shared_devices[group] = device
-        elif module.weight.device != shared_devices[group]:
+
+        if device != shared_devices[group]:
             raise ValueError(
                 f"Modules in tie group '{group}' span multiple devices "
-                f"({shared_devices[group]} vs {module.weight.device}). "
+                f"({shared_devices[group]} vs {device}). "
                 "Use a tie mode/factor that avoids cross-device sharing."
             )
 
-        module_seed = _stable_seed(config.seed, name)
-        wrapper = TinyLoRALinear.from_linear(
-            base_linear=module,
-            rank=config.rank,
-            proj_dim=config.proj_dim,
-            seed=module_seed,
-            shared_vector=shared,
-            vector_dtype=config.vector_torch_dtype,
-            compute_dtype=config.compute_torch_dtype,
-            scale=config.scale,
-            svd_method=config.svd_method,
-            svd_niter=config.svd_niter,
-        )
+        if config.adapter_type == "tinylora":
+            proj_dim = int(group_proj_dims[group])
+            if payload is None:
+                shared_vector = nn.Parameter(
+                    torch.zeros(proj_dim, dtype=config.vector_torch_dtype, device=device),
+                    requires_grad=True,
+                )
+                if config.projection_mode == "structured":
+                    block_count = config.projection_blocks * config.projection_blocks
+                    shared_scales = nn.Parameter(
+                        torch.ones(block_count, dtype=config.vector_torch_dtype, device=device),
+                        requires_grad=True,
+                    )
+                    payload = (shared_vector, shared_scales)
+                else:
+                    payload = shared_vector
+                shared_payloads[group] = payload
+
+            if config.projection_mode == "structured":
+                shared_vector, shared_scales = payload  # type: ignore[misc]
+            else:
+                shared_vector = payload  # type: ignore[assignment]
+                shared_scales = None
+
+            wrapper = TinyLoRALinear.from_linear(
+                base_linear=module,
+                rank=config.rank,
+                proj_dim=proj_dim,
+                seed=module_seed,
+                shared_vector=shared_vector,  # type: ignore[arg-type]
+                vector_dtype=config.vector_torch_dtype,
+                compute_dtype=config.compute_torch_dtype,
+                scale=config.scale,
+                svd_method=config.svd_method,
+                svd_niter=config.svd_niter,
+                projection_mode=config.projection_mode,
+                projection_blocks=config.projection_blocks,
+                shared_proj_block_scales=shared_scales,  # type: ignore[arg-type]
+            )
+
+        elif config.adapter_type == "lora_xs":
+            if payload is None:
+                payload = nn.Parameter(
+                    torch.zeros(config.rank, config.rank, dtype=config.vector_torch_dtype, device=device),
+                    requires_grad=True,
+                )
+                shared_payloads[group] = payload
+
+            wrapper = LoRAXSLinear(
+                base_linear=module,
+                rank=config.rank,
+                seed=module_seed,
+                shared_r=payload,  # type: ignore[arg-type]
+                vector_dtype=config.vector_torch_dtype,
+                compute_dtype=config.compute_torch_dtype,
+                scale=config.scale,
+                svd_method=config.svd_method,
+                svd_niter=config.svd_niter,
+            )
+
+        elif config.adapter_type == "lora":
+            current_shape = tuple(module.weight.shape)
+            if payload is None:
+                a = nn.Parameter(
+                    torch.empty(
+                        module.out_features,
+                        config.rank,
+                        dtype=config.vector_torch_dtype,
+                        device=device,
+                    ),
+                    requires_grad=True,
+                )
+                b = nn.Parameter(
+                    torch.empty(
+                        config.rank,
+                        module.in_features,
+                        dtype=config.vector_torch_dtype,
+                        device=device,
+                    ),
+                    requires_grad=True,
+                )
+                with torch.random.fork_rng(devices=[]):
+                    torch.manual_seed(group_seed)
+                    nn.init.normal_(a, mean=0.0, std=1.0 / max(1, config.rank) ** 0.5)
+                    nn.init.zeros_(b)
+
+                payload = (a, b)
+                shared_shapes[group] = current_shape
+                shared_payloads[group] = payload
+
+            expected_shape = shared_shapes[group]
+            if current_shape != expected_shape:
+                raise ValueError(
+                    f"LoRA shared group '{group}' mixes incompatible module shapes "
+                    f"{expected_shape} and {current_shape}. Use tie_mode=none or a larger tie_factor."
+                )
+
+            shared_a, shared_b = payload  # type: ignore[misc]
+            wrapper = LoRALinear(
+                base_linear=module,
+                rank=config.rank,
+                seed=module_seed,
+                shared_a=shared_a,
+                shared_b=shared_b,
+                vector_dtype=config.vector_torch_dtype,
+                compute_dtype=config.compute_torch_dtype,
+                scale=config.scale,
+                lora_alpha=config.lora_alpha,
+                lora_dropout=config.lora_dropout,
+            )
+
+        else:
+            raise ValueError(f"Unsupported adapter type: {config.adapter_type}")
+
         _replace_module(model, name, wrapper)
 
     trainable_count = count_unique_trainable_parameters(model.parameters())
+    parameter_to_group: dict[str, str] = {}
+    for parameter_name, parameter in model.named_parameters():
+        if not parameter.requires_grad:
+            continue
+        if "." not in parameter_name:
+            continue
+        module_name = parameter_name.rsplit(".", 1)[0]
+        if module_name in module_to_group:
+            parameter_to_group[parameter_name] = module_to_group[module_name]
+
     return InjectionReport(
         adapted_modules=len(targets),
-        shared_vectors=len(shared_vectors),
+        shared_vectors=len(shared_payloads),
         trainable_parameters=trainable_count,
         module_to_group=module_to_group,
+        parameter_to_group=parameter_to_group,
     )
+
+
+def apply_tinylora(
+    model: nn.Module,
+    config: TinyLoRAConfig,
+    *,
+    budget_cfg: dict[str, Any] | None = None,
+) -> InjectionReport:
+    """Backward-compatible alias."""
+    return apply_adapter(model, config, budget_cfg=budget_cfg)
 
 
 def collect_target_linears(model: nn.Module, target_modules: Iterable[str]) -> list[tuple[str, nn.Linear]]:

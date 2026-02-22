@@ -4,7 +4,7 @@ deterministic: false
 deterministic_warn_only: true
 model_name: Qwen/Qwen2.5-7B-Instruct
 model_dtype: bfloat16
-output_dir: outputs/grpo_gsm8k
+output_dir: outputs/grpo_gsm8k_adaptive_budget
 
 train_dataset:
   source: hf
@@ -15,20 +15,29 @@ train_dataset:
   answer_field: answer
   prompt_template: "{question}\n\nReason step by step. End with only the final answer."
 
-tinylora:
+adapter:
+  adapter_type: tinylora
   rank: 2
-  proj_dim: 13
-  tie_mode: full
+  proj_dim: 16
+  tie_mode: structured
   tie_factor: 1
+  projection_mode: random
   seed: 42
   vector_dtype: float32
   compute_dtype: float32
   target_modules: [q_proj, k_proj, v_proj, o_proj, up_proj, down_proj, gate_proj]
 
+# Keep bytes fixed and reallocate proj_dim across groups by gradient signal from a warmup run.
+# group_scores_path should point to `adapter_group_scores.json` produced by prior SFT/GRPO run.
+budget_allocation:
+  enabled: true
+  strategy: gradient
+  total_proj_dim_budget: 120
+  min_proj_dim_per_group: 1
+  max_proj_dim_per_group: 16
+  group_scores_path: outputs/hybrid/gsm8k_hybrid_tinylora/sft/adapter_group_scores.json
+
 guardrails:
-  expected_trainable_params: 13
-  expected_trainable_bytes: 52
-  tolerance: 0
   require_trainable_params: true
 
 training:

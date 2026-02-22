@@ -1,0 +1,26 @@
+base_train_config: configs/grpo_gsm8k_sweep_base.yaml
+base_eval_config: configs/eval_gsm8k_select.yaml
+output_root: outputs/sweeps/paper_full_repro
+
+# Paper-style procedure: for each update-size point,
+# sweep LR and average metric over 3 random seeds, then pick best LR.
+seeds: [41, 42, 43]
+learning_rates: [1.0e-7, 5.0e-7, 1.0e-6, 5.0e-6, 1.0e-5, 1.0e-4, 2.0e-4]
+
+# Update-size axes; include baselines in same pipeline.
+grid:
+  adapter.adapter_type: [tinylora, lora_xs, lora]
+  adapter.rank: [1, 2]
+  adapter.proj_dim: [1, 13, 49, 196]
+  adapter.tie_mode: [full, structured]
+  adapter.tie_factor: [1, 8, 64]
+
+# Define what "same update-size point" means for best-LR selection.
+group_by:
+  - adapter.adapter_type
+  - adapter.rank
+  - adapter.proj_dim
+  - adapter.tie_mode
+  - adapter.tie_factor
+
+metric_key: mean_exact_match

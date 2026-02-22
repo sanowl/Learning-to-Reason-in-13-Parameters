@@ -5,6 +5,8 @@ This file maps repository components to the paper **Learning to Reason in 13 Par
 ## Core method (Section 4)
 
 - TinyLoRA update rule is implemented in `src/ltr13/tinylora.py`.
+- LoRA and LoRA-XS baselines are implemented in `src/ltr13/lora.py`.
+- Unified adapter injection (`tinylora`, `lora`, `lora_xs`) is in `src/ltr13/inject.py`.
 - Exact structure:
   - frozen SVD factors `(U, Σ, V)` from each target linear weight.
   - fixed random projection tensor `P \in R^{u x r x r}`.
@@ -17,6 +19,7 @@ This file maps repository components to the paper **Learning to Reason in 13 Par
 
 - GRPO entrypoint: `src/ltr13/train_grpo.py`
   - exact-match reward for verifiable tasks.
+  - optional truncated importance sampling via `src/ltr13/grpo_tis.py`.
   - paper-style defaults in `configs/grpo_gsm8k.yaml` and `configs/grpo_math_hard.yaml`.
 - SFT baseline entrypoint: `src/ltr13/train_sft.py`
   - equivalent TinyLoRA injection path for fair capacity comparisons.
@@ -38,6 +41,8 @@ This file maps repository components to the paper **Learning to Reason in 13 Par
 ## Sweeps and ablations (Section 6 + 7)
 
 - Grid sweep runner: `scripts/run_sweep.py`.
+- Full automation (LR grid + multi-seed + best-LR selection): `scripts/run_paper_sweep.py`.
+- Result aggregation/plotting: `scripts/aggregate_results.py`, `scripts/plot_results.py`.
 - Sweep configs:
   - `configs/sweeps/paper_repro.yaml`
   - `configs/sweeps/sft_capacity.yaml`

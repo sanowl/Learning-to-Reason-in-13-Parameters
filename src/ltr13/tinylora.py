@@ -28,6 +28,9 @@ class TinyLoRALinear(nn.Module):
         scale: float = 1.0,
         svd_method: str = "auto",
         svd_niter: int = 2,
+        projection_mode: str = "random",
+        projection_blocks: int = 1,
+        shared_proj_block_scales: Optional[nn.Parameter] = None,
     ) -> None:
         super().__init__()
 
@@ -41,6 +44,12 @@ class TinyLoRALinear(nn.Module):
             raise ValueError(f"Unsupported svd_method: {svd_method}")
         if svd_niter <= 0:
             raise ValueError("svd_niter must be positive")
+        if projection_mode not in {"random", "structured"}:
+            raise ValueError(f"Unsupported projection_mode: {projection_mode}")
+        if projection_blocks <= 0:
+            raise ValueError("projection_blocks must be positive")
+        if projection_mode == "structured" and projection_blocks > rank:
+            raise ValueError("projection_blocks must be <= rank for structured projection")
 
         out_features, in_features = base_linear.weight.shape
         max_rank = min(out_features, in_features)
@@ -57,6 +66,8 @@ class TinyLoRALinear(nn.Module):
         self.compute_dtype = compute_dtype
         self.svd_method = svd_method
         self.svd_niter = svd_niter
+        self.projection_mode = projection_mode
+        self.projection_blocks = projection_blocks
         target_device = self.base_linear.weight.device
 
         with torch.no_grad():
@@ -99,6 +110,13 @@ class TinyLoRALinear(nn.Module):
                 projection.to(device=target_device, dtype=compute_dtype),
                 persistent=True,
             )
+            if projection_mode == "structured":
+                block = _build_projection_block_mask(
+                    rank=rank,
+                    num_blocks=projection_blocks,
+                    device=target_device,
+                )
+                self.register_buffer("projection_block_mask", block, persistent=True)
 
         if shared_vector is None:
             self.v = nn.Parameter(
@@ -117,6 +135,28 @@ class TinyLoRALinear(nn.Module):
                 )
             self.v = shared_vector
 
+        if projection_mode == "structured":
+            block_count = projection_blocks * projection_blocks
+            if shared_proj_block_scales is None:
+                self.proj_block_scales = nn.Parameter(
+                    torch.ones(block_count, dtype=vector_dtype, device=target_device),
+                    requires_grad=True,
+                )
+            else:
+                if shared_proj_block_scales.shape != (block_count,):
+                    raise ValueError(
+                        "Shared projection scale shape mismatch: "
+                        f"{tuple(shared_proj_block_scales.shape)} vs {(block_count,)}"
+                    )
+                if shared_proj_block_scales.device != target_device:
+                    raise ValueError(
+                        "Shared projection scale device mismatch: "
+                        f"{shared_proj_block_scales.device} vs {target_device}"
+                    )
+                self.proj_block_scales = shared_proj_block_scales
+        else:
+            self.register_parameter("proj_block_scales", None)
+
         self.register_buffer("_merged_delta", torch.empty(0), persistent=False)
         self._merged = False
 
@@ -134,6 +174,9 @@ class TinyLoRALinear(nn.Module):
         scale: float = 1.0,
         svd_method: str = "auto",
         svd_niter: int = 2,
+        projection_mode: str = "random",
+        projection_blocks: int = 1,
+        shared_proj_block_scales: Optional[nn.Parameter] = None,
     ) -> "TinyLoRALinear":
         return cls(
             base_linear=base_linear,
@@ -146,10 +189,18 @@ class TinyLoRALinear(nn.Module):
             scale=scale,
             svd_method=svd_method,
             svd_niter=svd_niter,
+            projection_mode=projection_mode,
+            projection_blocks=projection_blocks,
+            shared_proj_block_scales=shared_proj_block_scales,
         )
 
     def delta_weight(self, *, dtype: Optional[torch.dtype] = None) -> torch.Tensor:
-        r_matrix = torch.tensordot(self.v.to(self.compute_dtype), self.projection, dims=([0], [0]))
+        projection = self.projection
+        if self.projection_mode == "structured" and self.proj_block_scales is not None:
+            scales = self.proj_block_scales.to(self.compute_dtype)
+            scale_matrix = scales[self.projection_block_mask]
+            projection = projection * scale_matrix.unsqueeze(0)
+        r_matrix = torch.tensordot(self.v.to(self.compute_dtype), projection, dims=([0], [0]))
         scaled_r = self.svd_s.unsqueeze(1) * r_matrix
         delta = self.svd_u @ scaled_r @ self.svd_vh
         if dtype is not None:
@@ -191,8 +242,26 @@ class TinyLoRALinear(nn.Module):
     def extra_repr(self) -> str:
         return (
             f"rank={self.rank}, proj_dim={self.proj_dim}, "
-            f"compute_dtype={self.compute_dtype}, svd_method={self.svd_method}, merged={self._merged}"
+            f"compute_dtype={self.compute_dtype}, svd_method={self.svd_method}, "
+            f"projection_mode={self.projection_mode}, merged={self._merged}"
         )
+
+
+def _build_projection_block_mask(
+    *,
+    rank: int,
+    num_blocks: int,
+    device: torch.device,
+) -> torch.Tensor:
+    edges = torch.linspace(0, rank, steps=num_blocks + 1, device=device)
+    block_index = torch.zeros(rank, dtype=torch.long, device=device)
+    for idx in range(num_blocks):
+        start = int(edges[idx].item())
+        end = int(edges[idx + 1].item())
+        block_index[start:end] = idx
+    row = block_index.unsqueeze(1)
+    col = block_index.unsqueeze(0)
+    return (row * num_blocks + col).to(dtype=torch.long)
 
 
 def _compute_truncated_svd(

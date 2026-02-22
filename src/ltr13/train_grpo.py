@@ -4,19 +4,26 @@ import argparse
 from pathlib import Path
 from typing import Any
 
-from .checkpointing import save_trainable_state
-from .config import load_yaml_config, parse_tinylora_config
+from .checkpointing import load_trainable_state, save_trainable_state
+from .config import load_yaml_config, parse_adapter_config
 from .data import load_reasoning_dataset, parse_dataset_config
+from .adapter_scores import (
+    build_group_score_payload,
+    compute_group_delta_scores,
+    snapshot_trainable_state,
+)
 from .guardrails import compute_trainable_stats, enforce_trainable_guardrails
-from .inject import apply_tinylora
+from .grpo_tis import maybe_build_truncated_is_trainer
+from .inject import apply_adapter
 from .metadata import build_run_metadata, write_run_metadata
 from .modeling import load_model_and_tokenizer
 from .reward import exact_match_reward
+from .results import write_json
 from .utils import configure_reproducibility
 from .validation import validate_config
 
 try:
-    from trl import GRPOConfig, GRPOTrainer
+    from trl import GRPOConfig
 except ImportError as error:  # pragma: no cover - dependency/environment dependent
     raise ImportError(
         "trl with GRPO support is required. Install with `pip install trl` and retry."
@@ -24,7 +31,7 @@ except ImportError as error:  # pragma: no cover - dependency/environment depend
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Train GRPO with optional TinyLoRA")
+    parser = argparse.ArgumentParser(description="Train GRPO with optional adapters")
     parser.add_argument("--config", required=True, help="Path to YAML config")
     return parser.parse_args()
 
@@ -101,17 +108,28 @@ def main() -> None:
         model_kwargs=config.get("model_kwargs"),
     )
 
-    tinylora_cfg = parse_tinylora_config(config.get("tinylora"))
-    if tinylora_cfg is not None:
-        report = apply_tinylora(model, tinylora_cfg)
+    adapter_cfg = parse_adapter_config(config)
+    report = None
+    adapter_initial_state: dict[str, Any] | None = None
+    if adapter_cfg is not None:
+        report = apply_adapter(model, adapter_cfg, budget_cfg=config.get("budget_allocation"))
         print(
-            "[TinyLoRA] adapted_modules=",
+            f"[{adapter_cfg.adapter_type}] adapted_modules=",
             report.adapted_modules,
-            " shared_vectors=",
+            " shared_groups=",
             report.shared_vectors,
             " trainable_params=",
             report.trainable_parameters,
         )
+        init_state_path = config.get("init_trainable_state_path")
+        if init_state_path:
+            load_trainable_state(
+                model,
+                init_state_path,
+                strict=bool(config.get("strict_init_trainable_state", True)),
+            )
+            print(f"[Init] loaded trainable adapter state from {init_state_path}")
+        adapter_initial_state = snapshot_trainable_state(model)
 
     train_dataset = load_reasoning_dataset(
         parse_dataset_config(config["train_dataset"], default_split="train")
@@ -123,7 +141,7 @@ def main() -> None:
     if bool(train_cfg.get("disable_cache_during_train", True)):
         if hasattr(model, "config") and hasattr(model.config, "use_cache"):
             model.config.use_cache = False
-    if tinylora_cfg is not None and bool(train_cfg.get("enable_input_require_grads", True)):
+    if adapter_cfg is not None and bool(train_cfg.get("enable_input_require_grads", True)):
         if hasattr(model, "enable_input_require_grads"):
             model.enable_input_require_grads()
 
@@ -163,12 +181,18 @@ def main() -> None:
     )
     write_run_metadata(output_dir=output_dir, metadata=run_metadata)
 
-    trainer = GRPOTrainer(
-        model=model,
-        processing_class=tokenizer,
-        reward_funcs=[build_reward_fn()],
-        args=grpo_config,
-        train_dataset=train_dataset,
+    trainer_kwargs = {
+        "model": model,
+        "processing_class": tokenizer,
+        "reward_funcs": [build_reward_fn()],
+        "args": grpo_config,
+        "train_dataset": train_dataset,
+    }
+    truncated_is_cfg = dict(config.get("truncated_importance_sampling", {}))
+    trainer = maybe_build_truncated_is_trainer(
+        trainer_kwargs=trainer_kwargs,
+        clip_max=truncated_is_cfg.get("clip_max"),
+        enabled=bool(truncated_is_cfg.get("enabled", False)),
     )
 
     trainer.train()
@@ -181,11 +205,26 @@ def main() -> None:
         metadata={
             "config_path": args.config,
             "mode": "grpo",
+            "adapter_type": adapter_cfg.adapter_type if adapter_cfg is not None else "none",
             "config_hash": run_metadata["config_hash"],
             "git_commit": run_metadata["git_commit"],
             "seed": seed,
         },
     )
+
+    if adapter_cfg is not None and report is not None and adapter_initial_state is not None:
+        group_scores = compute_group_delta_scores(
+            model=model,
+            initial_state=adapter_initial_state,
+            parameter_to_group=report.parameter_to_group,
+        )
+        payload = build_group_score_payload(
+            group_scores=group_scores,
+            adapter_type=adapter_cfg.adapter_type,
+            seed=seed,
+            extra={"mode": "grpo", "output_dir": output_dir},
+        )
+        write_json(Path(output_dir) / "adapter_group_scores.json", payload)
 
 
 if __name__ == "__main__":

@@ -21,6 +21,7 @@ DEFAULT_TARGET_MODULES: tuple[str, ...] = (
 
 @dataclass(frozen=True)
 class TinyLoRAConfig:
+    adapter_type: str = "tinylora"
     rank: int = 2
     proj_dim: int = 1
     tie_mode: str = "full"
@@ -28,6 +29,10 @@ class TinyLoRAConfig:
     scale: float = 1.0
     svd_method: str = "auto"
     svd_niter: int = 2
+    projection_mode: str = "random"
+    projection_blocks: int = 1
+    lora_alpha: float = 1.0
+    lora_dropout: float = 0.0
     target_modules: tuple[str, ...] = DEFAULT_TARGET_MODULES
     seed: int = 0
     vector_dtype: str = "float32"
@@ -40,9 +45,19 @@ class TinyLoRAConfig:
             (self.tie_factor > 0, "tie_factor must be positive"),
             (self.scale > 0, "scale must be positive"),
             (self.svd_niter > 0, "svd_niter must be positive"),
+            (self.projection_blocks > 0, "projection_blocks must be positive"),
+            (self.lora_alpha > 0, "lora_alpha must be positive"),
+            (self.lora_dropout >= 0, "lora_dropout must be non-negative"),
+            (self.lora_dropout < 1, "lora_dropout must be < 1.0"),
         )
         errors = [message for condition, message in checks if not condition]
 
+        _validate_choice(
+            value=self.adapter_type,
+            valid_values={"tinylora", "lora", "lora_xs"},
+            field_name="adapter_type",
+            errors=errors,
+        )
         _validate_choice(
             value=self.tie_mode,
             valid_values={"none", "structured", "tiled", "full"},
@@ -55,10 +70,22 @@ class TinyLoRAConfig:
             field_name="svd_method",
             errors=errors,
         )
+        _validate_choice(
+            value=self.projection_mode,
+            valid_values={"random", "structured"},
+            field_name="projection_mode",
+            errors=errors,
+        )
         if not self.target_modules:
             errors.append("target_modules must be non-empty")
         elif any((not isinstance(name, str) or not name.strip()) for name in self.target_modules):
             errors.append("target_modules entries must be non-empty strings")
+        if (
+            self.adapter_type == "tinylora"
+            and self.projection_mode == "structured"
+            and self.projection_blocks > self.rank
+        ):
+            errors.append("projection_blocks must be <= rank for tinylora structured projection")
 
         if errors:
             joined = "; ".join(errors)
@@ -88,6 +115,7 @@ def parse_tinylora_config(raw: dict[str, Any] | None) -> TinyLoRAConfig | None:
     targets_tuple = _normalize_target_modules(raw.get("target_modules", DEFAULT_TARGET_MODULES))
 
     return TinyLoRAConfig(
+        adapter_type=str(raw.get("adapter_type", raw.get("type", "tinylora"))),
         rank=int(raw.get("rank", 2)),
         proj_dim=int(raw.get("proj_dim", 1)),
         tie_mode=str(raw.get("tie_mode", "full")),
@@ -95,11 +123,29 @@ def parse_tinylora_config(raw: dict[str, Any] | None) -> TinyLoRAConfig | None:
         scale=float(raw.get("scale", 1.0)),
         svd_method=str(raw.get("svd_method", "auto")),
         svd_niter=int(raw.get("svd_niter", 2)),
+        projection_mode=str(raw.get("projection_mode", "random")),
+        projection_blocks=int(raw.get("projection_blocks", 1)),
+        lora_alpha=float(raw.get("lora_alpha", 1.0)),
+        lora_dropout=float(raw.get("lora_dropout", 0.0)),
         target_modules=targets_tuple,
         seed=int(raw.get("seed", 0)),
         vector_dtype=str(raw.get("vector_dtype", "float32")),
         compute_dtype=str(raw.get("compute_dtype", "float32")),
     )
+
+
+def parse_adapter_config(config: dict[str, Any]) -> TinyLoRAConfig | None:
+    if "adapter" in config and config["adapter"] is not None:
+        raw = dict(config["adapter"])
+        if "adapter_type" not in raw and "type" not in raw:
+            raw["adapter_type"] = "tinylora"
+        return parse_tinylora_config(raw)
+    if "tinylora" in config and config["tinylora"] is not None:
+        raw = dict(config["tinylora"])
+        if "adapter_type" not in raw and "type" not in raw:
+            raw["adapter_type"] = "tinylora"
+        return parse_tinylora_config(raw)
+    return None
 
 
 def _str_to_dtype(name: str) -> torch.dtype:

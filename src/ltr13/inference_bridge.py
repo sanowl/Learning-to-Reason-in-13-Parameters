@@ -5,17 +5,27 @@ from contextlib import contextmanager
 import torch
 from torch import nn
 
-from .tinylora import merge_all_tinylora, unmerge_all_tinylora
+from .adapter_ops import merge_all_adapters, unmerge_all_adapters
 
 
 @contextmanager
 def merged_tinylora(model: nn.Module):
-    """Temporarily merge TinyLoRA weights for inference-only forward passes."""
-    merge_all_tinylora(model)
+    """Backward-compatible alias for merged_adapters_ctx."""
+    merge_all_adapters(model)
     try:
         yield model
     finally:
-        unmerge_all_tinylora(model)
+        unmerge_all_adapters(model)
+
+
+@contextmanager
+def merged_adapters_ctx(model: nn.Module):
+    """Temporarily merge adapter weights for inference-only forward passes."""
+    merge_all_adapters(model)
+    try:
+        yield model
+    finally:
+        unmerge_all_adapters(model)
 
 
 def truncated_importance_weights(

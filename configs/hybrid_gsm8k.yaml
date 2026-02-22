@@ -1,0 +1,11 @@
+# Hybrid schedule: short SFT warmup then GRPO, initializing GRPO adapter state from SFT.
+run_name: gsm8k_hybrid_tinylora
+output_root: outputs/hybrid
+
+sft_config: configs/sft_gsm8k.yaml
+grpo_config: configs/grpo_gsm8k.yaml
+eval_config: configs/eval_gsm8k_select.yaml
+
+# If true, GRPO adapter block is overwritten with SFT adapter block.
+copy_adapter_from_sft: true
+strict_init_trainable_state: true

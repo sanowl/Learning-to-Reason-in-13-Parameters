@@ -4,7 +4,7 @@ deterministic: false
 deterministic_warn_only: true
 model_name: Qwen/Qwen2.5-7B-Instruct
 model_dtype: bfloat16
-output_dir: outputs/grpo_gsm8k
+output_dir: outputs/grpo_gsm8k_lora
 
 train_dataset:
   source: hf
@@ -15,21 +15,17 @@ train_dataset:
   answer_field: answer
   prompt_template: "{question}\n\nReason step by step. End with only the final answer."
 
-tinylora:
-  rank: 2
-  proj_dim: 13
-  tie_mode: full
+adapter:
+  adapter_type: lora
+  rank: 8
+  tie_mode: none
   tie_factor: 1
+  lora_alpha: 8.0
+  lora_dropout: 0.0
   seed: 42
   vector_dtype: float32
   compute_dtype: float32
   target_modules: [q_proj, k_proj, v_proj, o_proj, up_proj, down_proj, gate_proj]
-
-guardrails:
-  expected_trainable_params: 13
-  expected_trainable_bytes: 52
-  tolerance: 0
-  require_trainable_params: true
 
 training:
   num_train_epochs: 3

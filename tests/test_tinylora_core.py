@@ -81,3 +81,23 @@ def test_lowrank_svd_initialization_path() -> None:
     )
     delta = module.delta_weight(dtype=torch.float32)
     assert delta.shape == base.weight.shape
+
+
+def test_structured_projection_adds_trainable_block_scales() -> None:
+    torch.manual_seed(4)
+    base = nn.Linear(6, 6, bias=False)
+    module = TinyLoRALinear(
+        base,
+        rank=2,
+        proj_dim=3,
+        seed=12,
+        projection_mode="structured",
+        projection_blocks=2,
+    )
+
+    assert module.proj_block_scales is not None
+    assert module.proj_block_scales.numel() == 4
+
+    x = torch.randn(2, 6)
+    y = module(x)
+    assert y.shape == (2, 6)

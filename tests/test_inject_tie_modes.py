@@ -102,3 +102,36 @@ def test_base_model_parameters_are_frozen_after_injection() -> None:
 
     all_trainable = [name for name, param in model.named_parameters() if param.requires_grad]
     assert all(name.endswith(".v") for name in all_trainable)
+
+
+def test_budget_allocation_changes_effective_tinylora_parameter_count() -> None:
+    model = ToyTransformer(num_layers=1)
+    cfg = _base_config(proj_dim=4, tie_mode="structured", tie_factor=1)
+    report = apply_tinylora(
+        model,
+        cfg,
+        budget_cfg={
+            "enabled": True,
+            "strategy": "uniform",
+            "total_proj_dim_budget": 7,
+            "min_proj_dim_per_group": 1,
+            "max_proj_dim_per_group": 4,
+        },
+    )
+
+    assert report.shared_vectors == 7
+    assert count_unique_trainable_parameters(model.parameters()) == 7
+
+
+def test_structured_projection_scales_are_shared_per_group() -> None:
+    model = ToyTransformer(num_layers=1)
+    cfg = _base_config(
+        proj_dim=1,
+        tie_mode="full",
+        tie_factor=1,
+        projection_mode="structured",
+        projection_blocks=2,
+    )
+    apply_tinylora(model, cfg)
+    # 1 shared v + (2x2)=4 shared block scales.
+    assert count_unique_trainable_parameters(model.parameters()) == 5
